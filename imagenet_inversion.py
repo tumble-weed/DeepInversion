@@ -22,7 +22,8 @@ import torch.utils.data
 from torchvision import datasets, transforms
 
 import numpy as np
-import torch.cuda.amp as amp
+# import torch.cuda.amp as amp
+from apex import amp
 import os
 import torchvision.models as models
 from utils.utils import load_model_pytorch, distributed_is_initialized
@@ -69,8 +70,8 @@ def run(args):
     net = net.to(device)
 
     use_fp16 = args.fp16
-    if use_fp16:
-        net, _ = amp.initialize(net, [], opt_level="O2")
+    # if use_fp16:
+    #     net, _ = amp.initialize(net, [], opt_level="O2")
 
     print('==> Resuming from checkpoint..')
 
@@ -109,15 +110,28 @@ def run(args):
             for module in net_verifier.modules():
                 if isinstance(module, nn.BatchNorm2d):
                     module.eval().half()
-
-    from deepinversion import DeepInversionClass
+    # import ipdb;ipdb.set_trace()
+    if os.environ.get('USE_NERF',False) == "1":
+        from deepinversion_nerf import DeepInversionClass
+    elif os.environ.get('USE_PR',False) == "1":
+        # from deepinversion_pr2 import DeepInversionClass
+        from deepinversion_pr3 import DeepInversionClass
+        if os.environ.get('PR4',False) == "1":
+            from deepinversion_pr4 import DeepInversionClass
+        if os.environ.get('PR5',False) == "1":
+            from deepinversion_pr5 import DeepInversionClass            
+        if os.environ.get('PR6',False) == "1":
+            from deepinversion_pr6 import DeepInversionClass                        
+    else:
+        from deepinversion import DeepInversionClass
 
     exp_name = args.exp_name
+    exp_name_alias = args.exp_name_alias
     # final images will be stored here:
     adi_data_path = "./final_images/%s"%exp_name
     # temporal data and generations will be stored here
     exp_name = "generations/%s"%exp_name
-
+    exp_name_alias = "generations/%s"%exp_name_alias
     args.iterations = 2000
     args.start_noise = True
     # args.detach_student = False
@@ -137,7 +151,7 @@ def run(args):
     parameters["random_label"] = args.random_label
     parameters["store_best_images"] = args.store_best_images
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(reduction='none')
 
     coefficients = dict()
     coefficients["r_feature"] = args.r_feature
@@ -152,6 +166,7 @@ def run(args):
     network_output_function = lambda x: x
 
     # check accuracy of verifier
+    # import ipdb; ipdb.set_trace()
     if args.verifier:
         hook_for_display = lambda x,y: validate_one(x, y, net_verifier)
     else:
@@ -160,6 +175,7 @@ def run(args):
     DeepInversionEngine = DeepInversionClass(net_teacher=net,
                                              final_data_path=adi_data_path,
                                              path=exp_name,
+                                             path_alias=exp_name_alias,
                                              parameters=parameters,
                                              setting_id=args.setting_id,
                                              bs = bs,
@@ -169,6 +185,7 @@ def run(args):
                                              coefficients = coefficients,
                                              network_output_function = network_output_function,
                                              hook_for_display = hook_for_display)
+    DeepInversionEngine.type_ = 'imagenet'
     net_student=None
     if args.adi_scale != 0:
         net_student = net_verifier
@@ -190,6 +207,7 @@ def main():
 
     parser.add_argument('--fp16', action='store_true', help='use FP16 for optimization')
     parser.add_argument('--exp_name', type=str, default='test', help='where to store experimental data')
+    parser.add_argument('--exp_name_alias', type=str, default=None, help='an alias for the exp_name directory')
 
     parser.add_argument('--verifier', action='store_true', help='evaluate batch with another model')
     parser.add_argument('--verifier_arch', type=str, default='mobilenet_v2', help = "arch name from torchvision models to act as a verifier")

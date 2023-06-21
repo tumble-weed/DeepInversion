@@ -137,3 +137,16 @@ def denormalize(image_tensor, use_fp16=False):
         image_tensor[:, c] = torch.clamp(image_tensor[:, c] * s + m, 0, 1)
 
     return image_tensor
+def normalize(image_tensor,inplace=False,use_fp16=False):
+    out_tensor = torch.zeros_like(image_tensor)
+    if use_fp16:
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float16)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float16)
+    else:
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+    for c in range(3):
+        m, s = mean[c], std[c]
+        out_tensor[:, c] = (image_tensor[:, c] - m)/s
+    return out_tensor
+        
