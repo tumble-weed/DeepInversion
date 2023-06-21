@@ -1,0 +1,13 @@
+%load_ext autoreload
+%autoreload 2
+import torch
+import numpy as np
+import glob
+import h5py
+import pytorch3d.ops
+import dutils
+# visualize a gt point cloud of the class
+
+
+
+

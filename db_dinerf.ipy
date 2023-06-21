@@ -1,0 +1,234 @@
+%load_ext autoreload
+%autoreload 2
+if True:
+            TODO
+            focal = 2
+            TODO
+            camera_distance = 2
+            
+            pixel_coords = torch.stack([xs, ys, torch.full_like(xs, -focal)], dim=-1)
+            # We want the zs to be negative ones, so we divide everything by the focal length
+            # (which is in pixel units).
+            camera_coords = pixel_coords / focal
+            init_ds = camera_coords.to(device)
+            iniital_ray_origin = torch.Tensor(np.array([0, 0, float(camera_distance)])).to(device)
+            # END NERF ---------------------------------------------
+            if False:
+                if use_fp16:
+                    static_loss_scale = 256
+                    static_loss_scale = "dynamic"
+                    _, optimizer = amp.initialize([], optimizer, opt_level="O2", loss_scale=static_loss_scale)
+            
+
+            """
+            lr_scheduler = lr_cosine_policy(self.lr, 100, iterations_per_layer)
+            """
+            # NERF ---------------------------------------------
+
+            # Initialize volume rendering hyperparameters.
+            # Near bound. See Section 4.
+            near_bound = 1.0
+            # Far bound. See Section 4.
+            far_bound = 4.0
+            # Number of coarse samples along a ray. See Section 5.3.
+            n_coarse_samples = 64
+            # Number of fine samples along a ray. See Section 5.3.
+            n_fine_samples = 128
+            # Bins used to sample depths along a ray. See Equation (2) in Section 4.
+            t_i_c_gap = (far_bound - near_bound) / n_coarse_samples
+            t_i_c_bin_edges = (near_bound + torch.arange(n_coarse_samples) * t_i_c_gap).to(device)
+            num_iters = 300000
+            display_every = 100
+
+            n_pix = np.prod(img_size)
+            pixel_ps = torch.full((n_pix,), 1 / n_pix).to(device)
+            psnrs = []
+            iternums = []
+            # See Section 5.3.
+
+            inputs_F_c.train()
+            inputs_F_f.train()            
+            # END NERF ---------------------------------------------
+            for iteration_loc in range(iterations_per_layer):
+                iteration += 1
+                """
+                # learning rate scheduling
+                lr_scheduler(optimizer, iteration_loc, iteration_loc)
+                """
+                # NERF ---------------------------------------------
+                target_pose = TODO
+                """
+                R = target_pose[:3, :3]   
+                # Get rotated ray origins (os) and ray directions (ds). See Section 4.
+                ds = torch.einsum("ij,hwj->hwi", R, init_ds)
+                os = (R @ iniital_ray_origin).expand(ds.shape)
+                """
+                if True and "copied from test image rendering":
+                    # NERF: do test rendering here -------------------------
+                    R = torch.Tensor(target_pose[ :3, :3]).to(device)
+                    ds = torch.einsum("ij,hwj->hwi", R, init_ds)
+                    os_ = (R @ iniital_ray_origin).expand(ds.shape)
+                    (_, C_rs_f) = run_one_iter_of_nerf(
+                                            ds,
+                                            n_coarse_samples,
+                                            t_i_c_bin_edges,
+                                            t_i_c_gap,
+                                            os_,
+                                            chunk_size,
+                                            inputs_F_c,
+                                            n_fine_samples,
+                                            far_bound,
+                                            inputs_F_f,
+                                        )        
+                    inputs =  C_rs_f           
+                    # END NERF ---------------------------------------------
+                # END NERF ---------------------------------------------
+                # perform downsampling if needed
+                if lower_res!=1:
+                    inputs_jit = pooling_function(inputs)
+                else:
+                    inputs_jit = inputs
+                #=============================================================
+                # apply random jitter offsets
+                off1 = random.randint(-lim_0, lim_0)
+                off2 = random.randint(-lim_1, lim_1)
+                inputs_jit = torch.roll(inputs_jit, shifts=(off1, off2), dims=(2, 3))
+
+                # Flipping
+                flip = random.random() > 0.5
+                if flip and self.do_flip:
+                    inputs_jit = torch.flip(inputs_jit, dims=(3,))
+
+                # forward pass
+                optimizer.zero_grad()
+                net_teacher.zero_grad()
+
+                outputs = net_teacher(inputs_jit)
+                if (iteration_loc == iterations_per_layer - 1) and lr_it == 1:
+                    from prediction_ranking import get_prediction_ranks,get_classname
+                    import ipdb; ipdb.set_trace()
+                outputs = self.network_output_function(outputs)
+
+                # R_cross classification loss
+                # print('check if targets are just indicators')
+                # import ipdb; ipdb.set_trace()
+                # NERF --------------------------------------------------------
+                # Calculate the mean squared error for both the coarse and fine MLP models and
+                # update the weights. See Equation (6) in Section 5.3.
+                if USE_FP16:
+                    with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=True):
+                        loss = criterion(outputs, targets)
+                else:
+                    loss = criterion(outputs, targets)
+                # END NERF ------------------------------------------------------
+                
+                # R_prior losses
+                loss_var_l1, loss_var_l2 = get_image_prior_losses(inputs_jit)
+
+                # print('see step by step how the batch norm loss is calculated')
+                # import ipdb; ipdb.set_trace()
+                # R_feature loss
+                
+                # rescale = [self.first_bn_multiplier] + [ (0.1 if os.environ.get('SINGLE_CLASS',False) else 1) for _ in range(len(self.loss_r_feature_layers)-1)]
+                rescale = [self.first_bn_multiplier] + [ (1) for _ in range(len(self.loss_r_feature_layers)-1)]
+                loss_r_feature = sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(self.loss_r_feature_layers)])
+
+                # R_ADI
+                loss_verifier_cig = torch.zeros(1)
+                if self.adi_scale!=0.0:
+                    if self.detach_student:
+                        outputs_student = net_student(inputs_jit).detach()
+                    else:
+                        outputs_student = net_student(inputs_jit)
+
+                    T = 3.0
+                    if 1:
+
+                        T = 3.0
+                        # Jensen Shanon divergence:
+                        # another way to force KL between negative probabilities
+                        P = nn.functional.softmax(outputs_student / T, dim=1)
+                        Q = nn.functional.softmax(outputs / T, dim=1)
+                        M = 0.5 * (P + Q)
+
+                        P = torch.clamp(P, 0.01, 0.99)
+                        Q = torch.clamp(Q, 0.01, 0.99)
+                        M = torch.clamp(M, 0.01, 0.99)
+                        eps = 0.0
+                        loss_verifier_cig = 0.5 * kl_loss(torch.log(P + eps), M) + 0.5 * kl_loss(torch.log(Q + eps), M)
+                         # JS criteria - 0 means full correlation, 1 - means completely different
+                        loss_verifier_cig = 1.0 - torch.clamp(loss_verifier_cig, 0.0, 1.0)
+
+                    if local_rank==0:
+                        if iteration % save_every==0:
+                            print('loss_verifier_cig', loss_verifier_cig.item())
+
+                # l2 loss on images
+                loss_l2 = torch.norm(inputs_jit.view(self.bs, -1), dim=1).mean()
+
+                # combining losses
+                loss_aux = self.var_scale_l2 * loss_var_l2 + \
+                           self.var_scale_l1 * loss_var_l1 + \
+                           self.bn_reg_scale * loss_r_feature + \
+                           self.l2_scale * loss_l2
+
+                if self.adi_scale!=0.0:
+                    loss_aux += self.adi_scale * loss_verifier_cig
+
+                loss = self.main_loss_multiplier * loss + loss_aux
+
+                if local_rank==0:
+                    if iteration % save_every==0:
+                        print("------------iteration {}----------".format(iteration))
+                        print("total loss", loss.item())
+                        print("loss_r_feature", loss_r_feature.item())
+                        print("main criterion", criterion(outputs, targets).item())
+
+                        if self.hook_for_display is not None:
+                            self.hook_for_display(inputs, targets)
+                """
+                # do image update
+                if use_fp16:
+                    # optimizer.backward(loss)
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
+                else:
+                    loss.backward()
+                optimizer.step()
+                """
+                # NERF -------------------------------------------------------------
+                if USE_FP16:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                # END NERF ----------------------------------------------------------
+                for g in optimizer.param_groups:
+                    g["lr"] = lr * decay_rate ** (iteration / decay_steps)
+                # clip color outlayers
+
+                if best_cost > loss.item() or iteration == 1:
+                    best_inputs = inputs.data.clone()
+                    best_cost = loss.item()
+
+                if iteration % save_every==0 and (save_every > 0):
+                    if local_rank==0:
+                        # print('pickle save the images for running tests etc. later')
+                        # import ipdb; ipdb.set_trace()
+                        import pickle
+                        with open('{}/best_images/output_{:05d}_gpu_{}.pkl'.format(self.prefix,
+                                                                                           iteration // save_every,
+                                                                                           local_rank),'wb') as f:
+                            pickle.dump(tensor_to_numpy(inputs),f)
+                            
+                        vutils.save_image(inputs,
+                                          '{}/best_images/output_{:05d}_gpu_{}.png'.format(self.prefix,
+                                                                                           iteration // save_every,
+                                                                                           local_rank),
+                                          normalize=True, scale_each=True, nrow=int(10))
+
+        if self.store_best_images:
+            best_inputs = denormalize(best_inputs)
+            self.save_images(best_inputs, targets)
+
+        # to reduce memory consumption by states of the optimizer we deallocate memory
+        optimizer.state = collections.defaultdict(dict)
